@@ -1,6 +1,10 @@
 spring:
   application:
     name: market-data-stream
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
 
 server:
   port: ${PORT:8080}
@@ -10,10 +14,17 @@ management:
     web:
       exposure:
         include: health, info, metrics
+  health:
+    redis:
+      # Only meaningful when running distributed (market.distribution=redis)
+      enabled: ${REDIS_HEALTH:false}
 
 market:
+  # local: in-process feed (single instance) | redis: ticks fanned out through Redis pub/sub
+  distribution: ${MARKET_DISTRIBUTION:local}
   feed:
-    enabled: true
+    # Generate prices on this instance (in redis mode, exactly one instance should)
+    enabled: ${MARKET_FEED_ENABLED:true}
     tick-interval: 250ms
   # Simulated instruments: drift and volatility are annual (0.25 = 25%)
   instruments:

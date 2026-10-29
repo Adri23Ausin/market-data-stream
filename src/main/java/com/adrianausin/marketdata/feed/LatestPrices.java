@@ -4,6 +4,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.context.SmartLifecycle;
 import org.springframework.stereotype.Component;
 import reactor.core.Disposable;
@@ -16,11 +17,13 @@ import reactor.core.Disposable;
 public class LatestPrices implements SmartLifecycle {
 
     private final MarketFeed feed;
+    private final ObjectProvider<PriceSnapshot> snapshot;
     private final Map<String, Tick> latest = new ConcurrentHashMap<>();
     private volatile Disposable subscription;
 
-    public LatestPrices(MarketFeed feed) {
+    public LatestPrices(MarketFeed feed, ObjectProvider<PriceSnapshot> snapshot) {
         this.feed = feed;
+        this.snapshot = snapshot;
     }
 
     public Optional<Tick> get(String symbol) {
@@ -33,7 +36,15 @@ public class LatestPrices implements SmartLifecycle {
 
     @Override
     public void start() {
-        subscription = feed.ticks().subscribe(tick -> latest.put(tick.symbol(), tick));
+        subscription = feed.ticks().subscribe(this::update);
+        // Distributed mode: prices published before this instance started
+        snapshot.ifAvailable(store -> store.latest().subscribe(this::update));
+    }
+
+    private void update(Tick tick) {
+        // A snapshot read late must never overwrite a newer live tick
+        latest.merge(tick.symbol(), tick,
+                (current, candidate) -> candidate.timestamp().isBefore(current.timestamp()) ? current : candidate);
     }
 
     @Override
@@ -49,7 +60,7 @@ public class LatestPrices implements SmartLifecycle {
     }
 
     /**
-     * Start after the feed, so the first ticks are not missed.
+     * A lower phase starts earlier: subscribe before the feed starts, so no tick is missed.
      */
     @Override
     public int getPhase() {

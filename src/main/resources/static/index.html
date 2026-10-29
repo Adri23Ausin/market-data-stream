@@ -1,0 +1,248 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Market Data Stream</title>
+    <style>
+        :root {
+            --bg: #0f1419; --panel: #171d24; --border: #263040; --text: #d6dde6; --muted: #7d8a99;
+            --up: #26a69a; --down: #ef5350; --accent: #4c8dff;
+        }
+        * { box-sizing: border-box; }
+        body { margin: 0; font: 14px/1.4 system-ui, -apple-system, Segoe UI, sans-serif; background: var(--bg); color: var(--text); }
+        header { display: flex; align-items: center; justify-content: space-between; padding: 12px 20px; border-bottom: 1px solid var(--border); }
+        header h1 { margin: 0; font-size: 18px; font-weight: 600; }
+        #status { font-size: 12px; color: var(--muted); }
+        #status.live::before { content: "●"; color: var(--up); margin-right: 6px; }
+        main { display: grid; grid-template-columns: 280px 1fr 300px; gap: 16px; padding: 16px 20px; }
+        @media (max-width: 1000px) { main { grid-template-columns: 1fr; } }
+        section { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 12px; }
+        h2 { margin: 0 0 10px; font-size: 13px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); }
+        table { width: 100%; border-collapse: collapse; }
+        td { padding: 8px 6px; border-bottom: 1px solid var(--border); font-variant-numeric: tabular-nums; }
+        tr { cursor: pointer; }
+        tr.selected td { background: #1e2733; }
+        td.price { text-align: right; font-weight: 600; transition: color .3s; }
+        td.change { text-align: right; font-size: 12px; }
+        .up { color: var(--up); } .down { color: var(--down); }
+        .name { display: block; font-size: 11px; color: var(--muted); }
+        #chart-head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 8px; }
+        #chart-title { font-size: 20px; font-weight: 600; }
+        .intervals button { background: none; border: 1px solid var(--border); color: var(--text); padding: 4px 10px; border-radius: 4px; cursor: pointer; }
+        .intervals button.active { border-color: var(--accent); color: var(--accent); }
+        canvas { width: 100%; height: 420px; display: block; }
+        form { display: grid; gap: 8px; margin-bottom: 12px; }
+        form .row { display: flex; gap: 8px; }
+        select, input, form button { flex: 1; background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 4px; padding: 6px; font: inherit; }
+        form button { background: var(--accent); border: none; cursor: pointer; font-weight: 600; }
+        #alerts li { list-style: none; padding: 8px 0; border-bottom: 1px solid var(--border); font-size: 13px; }
+        #alerts { padding: 0; margin: 0; max-height: 320px; overflow: auto; }
+        #alerts .time { color: var(--muted); font-size: 11px; }
+        footer { padding: 0 20px 16px; color: var(--muted); font-size: 12px; }
+        a { color: var(--accent); }
+    </style>
+</head>
+<body>
+<header>
+    <h1>Market Data Stream</h1>
+    <span id="status">connecting…</span>
+</header>
+<main>
+    <section>
+        <h2>Watchlist</h2>
+        <table><tbody id="watchlist"></tbody></table>
+    </section>
+    <section>
+        <div id="chart-head">
+            <span id="chart-title">—</span>
+            <span class="intervals">
+                <button data-interval="5s" class="active">5s</button>
+                <button data-interval="1m">1m</button>
+            </span>
+        </div>
+        <canvas id="chart"></canvas>
+    </section>
+    <section>
+        <h2>Price alerts</h2>
+        <form id="alert-form">
+            <div class="row">
+                <select id="alert-symbol"></select>
+                <select id="alert-direction">
+                    <option value="ABOVE">above</option>
+                    <option value="BELOW">below</option>
+                </select>
+            </div>
+            <div class="row">
+                <input id="alert-price" type="number" step="any" min="0" placeholder="Target price" required>
+                <button type="submit">Create</button>
+            </div>
+        </form>
+        <h2>Fired</h2>
+        <ul id="alerts"></ul>
+    </section>
+</main>
+<footer>Simulated prices (geometric Brownian motion). API docs: <a href="/swagger-ui.html">Swagger UI</a></footer>
+
+<script>
+    const state = { instruments: [], prices: {}, opens: {}, selected: null, interval: '5s', candles: [] };
+    const fmt = (value, symbol) => Number(value).toLocaleString('en-US', {
+        minimumFractionDigits: symbol === 'SAN.MC' ? 3 : 2, maximumFractionDigits: symbol === 'SAN.MC' ? 3 : 2 });
+
+    async function init() {
+        state.instruments = await (await fetch('/api/v1/instruments')).json();
+        const body = document.getElementById('watchlist');
+        const symbolSelect = document.getElementById('alert-symbol');
+        for (const instrument of state.instruments) {
+            const row = document.createElement('tr');
+            row.id = 'row-' + instrument.symbol;
+            row.innerHTML = `<td>${instrument.symbol}<span class="name">${instrument.name}</span></td>
+                             <td class="price">—</td><td class="change">—</td>`;
+            row.onclick = () => select(instrument.symbol);
+            body.appendChild(row);
+            symbolSelect.add(new Option(instrument.symbol, instrument.symbol));
+            state.opens[instrument.symbol] = Number(instrument.initialPrice);
+        }
+        select(state.instruments[0].symbol);
+        streamTicks();
+        streamAlerts();
+    }
+
+    function streamTicks() {
+        const source = new EventSource('/api/v1/stream/ticks?throttleMs=200');
+        const status = document.getElementById('status');
+        source.onopen = () => { status.textContent = 'live'; status.className = 'live'; };
+        source.onerror = () => { status.textContent = 'reconnecting…'; status.className = ''; };
+        source.addEventListener('tick', event => onTick(JSON.parse(event.data)));
+    }
+
+    function onTick(tick) {
+        const previous = state.prices[tick.symbol];
+        state.prices[tick.symbol] = Number(tick.price);
+        const row = document.getElementById('row-' + tick.symbol);
+        if (!row) return;
+        const priceCell = row.querySelector('.price');
+        priceCell.textContent = fmt(tick.price, tick.symbol);
+        if (previous !== undefined && previous !== Number(tick.price)) {
+            priceCell.className = 'price ' + (Number(tick.price) > previous ? 'up' : 'down');
+        }
+        const change = (Number(tick.price) / state.opens[tick.symbol] - 1) * 100;
+        const changeCell = row.querySelector('.change');
+        changeCell.textContent = (change >= 0 ? '+' : '') + change.toFixed(2) + '%';
+        changeCell.className = 'change ' + (change >= 0 ? 'up' : 'down');
+        if (tick.symbol === state.selected) updateLiveCandle(tick);
+    }
+
+    // The candle in progress is built in the browser from ticks; closed ones come from the server
+    function updateLiveCandle(tick) {
+        const seconds = state.interval === '5s' ? 5 : 60;
+        const openTime = Math.floor(Date.parse(tick.timestamp) / 1000 / seconds) * seconds * 1000;
+        const price = Number(tick.price);
+        const last = state.candles[state.candles.length - 1];
+        if (last && last.t === openTime) {
+            last.h = Math.max(last.h, price); last.l = Math.min(last.l, price); last.c = price;
+        } else if (!last || openTime > last.t) {
+            state.candles.push({ t: openTime, o: price, h: price, l: price, c: price });
+            if (state.candles.length > 80) state.candles.shift();
+        }
+        draw();
+    }
+
+    let candleSource;
+    async function select(symbol) {
+        state.selected = symbol;
+        document.querySelectorAll('#watchlist tr').forEach(row => row.classList.toggle('selected', row.id === 'row-' + symbol));
+        document.getElementById('chart-title').textContent = symbol;
+        state.candles = [];
+        if (state.interval === '1m') {
+            const history = await (await fetch(`/api/v1/candles/${encodeURIComponent(symbol)}?interval=1m&limit=80`)).json();
+            state.candles = history.map(toPoint);
+        }
+        if (candleSource) candleSource.close();
+        candleSource = new EventSource(`/api/v1/stream/candles?interval=${state.interval}&symbols=${encodeURIComponent(symbol)}`);
+        candleSource.addEventListener('candle', event => {
+            const closed = toPoint(JSON.parse(event.data));
+            const index = state.candles.findIndex(c => c.t === closed.t);
+            if (index >= 0) state.candles[index] = closed; else state.candles.push(closed);
+            state.candles.sort((a, b) => a.t - b.t);
+            draw();
+        });
+        draw();
+    }
+
+    const toPoint = c => ({ t: Date.parse(c.openTime), o: +c.open, h: +c.high, l: +c.low, c: +c.close });
+
+    function draw() {
+        const canvas = document.getElementById('chart');
+        const ratio = window.devicePixelRatio || 1;
+        const width = canvas.clientWidth, height = canvas.clientHeight;
+        canvas.width = width * ratio; canvas.height = height * ratio;
+        const ctx = canvas.getContext('2d');
+        ctx.scale(ratio, ratio);
+        ctx.clearRect(0, 0, width, height);
+        const candles = state.candles;
+        if (candles.length === 0) {
+            ctx.fillStyle = '#7d8a99'; ctx.fillText('Waiting for prices…', 20, 30);
+            return;
+        }
+        const axis = 70, top = 10, bottom = height - 20;
+        const high = Math.max(...candles.map(c => c.h)), low = Math.min(...candles.map(c => c.l));
+        const padding = (high - low) * 0.1 || high * 0.001;
+        const max = high + padding, min = low - padding;
+        const y = price => top + (max - price) / (max - min) * (bottom - top);
+        const slot = (width - axis) / 80;
+
+        ctx.strokeStyle = '#263040'; ctx.fillStyle = '#7d8a99'; ctx.font = '11px system-ui';
+        for (let i = 0; i <= 5; i++) {
+            const price = min + (max - min) * i / 5;
+            ctx.beginPath(); ctx.moveTo(0, y(price)); ctx.lineTo(width - axis, y(price)); ctx.stroke();
+            ctx.fillText(fmt(price, state.selected), width - axis + 6, y(price) + 4);
+        }
+        candles.forEach((c, i) => {
+            const x = (80 - candles.length + i) * slot + slot / 2;
+            const color = c.c >= c.o ? '#26a69a' : '#ef5350';
+            ctx.strokeStyle = color; ctx.fillStyle = color;
+            ctx.beginPath(); ctx.moveTo(x, y(c.h)); ctx.lineTo(x, y(c.l)); ctx.stroke();
+            const bodyTop = y(Math.max(c.o, c.c)), bodyHeight = Math.max(1, Math.abs(y(c.o) - y(c.c)));
+            ctx.fillRect(x - slot * 0.35, bodyTop, slot * 0.7, bodyHeight);
+        });
+        const last = candles[candles.length - 1].c;
+        ctx.fillStyle = '#4c8dff'; ctx.fillRect(width - axis, y(last) - 9, axis, 18);
+        ctx.fillStyle = '#fff'; ctx.fillText(fmt(last, state.selected), width - axis + 6, y(last) + 4);
+    }
+
+    function streamAlerts() {
+        const source = new EventSource('/api/v1/alerts/stream');
+        source.addEventListener('alert', event => {
+            const alert = JSON.parse(event.data);
+            const item = document.createElement('li');
+            item.innerHTML = `<strong>${alert.symbol}</strong> ${alert.direction.toLowerCase()} ${fmt(alert.targetPrice, alert.symbol)}
+                              → <span class="${alert.direction === 'ABOVE' ? 'up' : 'down'}">${fmt(alert.triggeredPrice, alert.symbol)}</span>
+                              <div class="time">${new Date(alert.triggeredAt).toLocaleTimeString()}</div>`;
+            document.getElementById('alerts').prepend(item);
+        });
+    }
+
+    document.getElementById('alert-form').onsubmit = async event => {
+        event.preventDefault();
+        await fetch('/api/v1/alerts', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                symbol: document.getElementById('alert-symbol').value,
+                direction: document.getElementById('alert-direction').value,
+                price: document.getElementById('alert-price').value
+            })
+        });
+        document.getElementById('alert-price').value = '';
+    };
+
+    document.querySelectorAll('.intervals button').forEach(button => button.onclick = () => {
+        document.querySelectorAll('.intervals button').forEach(b => b.classList.toggle('active', b === button));
+        state.interval = button.dataset.interval;
+        select(state.selected);
+    });
+    window.addEventListener('resize', draw);
+    init();
+</script>
+</body>
+</html>

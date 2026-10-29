@@ -1,0 +1,69 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: marketdata
+      POSTGRES_USER: marketdata
+      POSTGRES_PASSWORD: marketdata
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - marketdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U marketdata -d marketdata"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7.4-alpine
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # Generates prices, publishes them to Redis, records candles and evaluates alerts
+  market-data:
+    build: .
+    image: market-data-stream:latest
+    profiles: ["app"]
+    ports:
+      - "${APP_PORT:-8080}:8080"
+    environment: &app-environment
+      MARKET_DISTRIBUTION: redis
+      MARKET_FEED_ENABLED: "true"
+      REDIS_HOST: redis
+      REDIS_HEALTH: "true"
+      DB_HOST: postgres
+    depends_on: &app-dependencies
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck: &app-healthcheck
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/actuator/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 20s
+
+  # A second instance that only streams: same prices, served from Redis
+  market-data-replica:
+    image: market-data-stream:latest
+    profiles: ["app"]
+    ports:
+      - "${REPLICA_PORT:-8081}:8080"
+    environment:
+      <<: *app-environment
+      MARKET_FEED_ENABLED: "false"
+    depends_on:
+      <<: *app-dependencies
+      market-data:
+        condition: service_healthy
+    healthcheck: *app-healthcheck
+
+volumes:
+  marketdata:

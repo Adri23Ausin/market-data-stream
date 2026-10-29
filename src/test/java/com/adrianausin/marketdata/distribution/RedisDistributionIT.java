@@ -4,6 +4,7 @@ import java.math.BigDecimal;
 import java.time.Duration;
 import java.time.Instant;
 
+import com.adrianausin.marketdata.TestcontainersConfiguration;
 import com.adrianausin.marketdata.feed.LatestPrices;
 import com.adrianausin.marketdata.feed.MarketFeed;
 import com.adrianausin.marketdata.feed.Tick;
@@ -12,6 +13,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
+import org.springframework.context.annotation.Import;
 import org.springframework.data.redis.core.ReactiveStringRedisTemplate;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
@@ -29,6 +31,7 @@ import static org.assertj.core.api.Assertions.assertThat;
         "market.feed.enabled=false"
 })
 @Testcontainers
+@Import(TestcontainersConfiguration.class)
 class RedisDistributionIT {
 
     @Container

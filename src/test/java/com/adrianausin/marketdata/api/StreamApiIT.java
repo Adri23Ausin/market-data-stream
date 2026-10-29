@@ -5,6 +5,7 @@ import java.time.Duration;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
 
+import com.adrianausin.marketdata.TestcontainersConfiguration;
 import com.adrianausin.marketdata.candles.Candle;
 import com.adrianausin.marketdata.feed.Tick;
 import org.junit.jupiter.api.Test;
@@ -12,6 +13,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.boot.webtestclient.autoconfigure.AutoConfigureWebTestClient;
+import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.reactive.server.WebTestClient;
 import org.springframework.web.reactive.socket.WebSocketMessage;
@@ -28,7 +30,8 @@ import static org.assertj.core.api.Assertions.assertThat;
         "market.feed.seed=42"
 })
 @AutoConfigureWebTestClient
-class StreamApiTest {
+@Import(TestcontainersConfiguration.class)
+class StreamApiIT {
 
     @Autowired
     WebTestClient client;

@@ -30,7 +30,7 @@ public class SimulatedMarketFeed implements MarketFeed, SmartLifecycle {
 
     @Override
     public Flux<Tick> ticks() {
-        return sink.asFlux();
+        return MarketFeed.buffered(sink.asFlux());
     }
 
     @Override

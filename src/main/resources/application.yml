@@ -1,0 +1,12 @@
+spring:
+  application:
+    name: market-data-stream
+
+server:
+  port: ${PORT:8080}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health, info, metrics

@@ -31,9 +31,6 @@ import reactor.core.publisher.Flux;
 @Tag(name = "Streams", description = "Live market data over Server-Sent Events")
 class StreamController {
 
-    /** Comment sent when nothing else was, so proxies don't close idle connections. */
-    static final Duration HEARTBEAT = Duration.ofSeconds(15);
-
     private final MarketFeed feed;
     private final LatestPrices latestPrices;
     private final CandleStreams candleStreams;
@@ -59,8 +56,7 @@ class StreamController {
             // Throttle each symbol separately, so a busy symbol never hides a quiet one
             live = live.groupBy(Tick::symbol).flatMap(bySymbol -> bySymbol.sample(period));
         }
-        return withHeartbeat(Flux.concat(snapshot, live)
-                .map(tick -> ServerSentEvent.builder(tick).event("tick").build()));
+        return ServerSentEvents.stream("tick", Flux.concat(snapshot, live));
     }
 
     @GetMapping("/candles")
@@ -69,15 +65,8 @@ class StreamController {
             @RequestParam(defaultValue = "1m") String interval,
             @RequestParam(required = false) @Nullable Set<String> symbols) {
         Set<String> wanted = normalize(symbols);
-        return withHeartbeat(candleStreams.candles(Intervals.parse(interval))
-                .filter(candle -> wanted.isEmpty() || wanted.contains(candle.symbol()))
-                .map(candle -> ServerSentEvent.builder(candle).event("candle").build()));
-    }
-
-    private static <T> Flux<ServerSentEvent<T>> withHeartbeat(Flux<ServerSentEvent<T>> events) {
-        Flux<ServerSentEvent<T>> heartbeat = Flux.interval(HEARTBEAT)
-                .map(i -> ServerSentEvent.<T>builder().comment("heartbeat").build());
-        return Flux.merge(events, heartbeat);
+        return ServerSentEvents.stream("candle", candleStreams.candles(Intervals.parse(interval))
+                .filter(candle -> wanted.isEmpty() || wanted.contains(candle.symbol())));
     }
 
     private static Set<String> normalize(@Nullable Set<String> symbols) {

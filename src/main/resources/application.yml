@@ -10,3 +10,16 @@ management:
     web:
       exposure:
         include: health, info, metrics
+
+market:
+  feed:
+    enabled: true
+    tick-interval: 250ms
+  # Simulated instruments: drift and volatility are annual (0.25 = 25%)
+  instruments:
+    - { symbol: AAPL, name: Apple Inc., initial-price: 228.50, drift: 0.10, volatility: 0.25 }
+    - { symbol: MSFT, name: Microsoft Corp., initial-price: 431.20, drift: 0.09, volatility: 0.22 }
+    - { symbol: NVDA, name: NVIDIA Corp., initial-price: 138.70, drift: 0.20, volatility: 0.55 }
+    - { symbol: SAN.MC, name: Banco Santander, initial-price: 4.62, drift: 0.05, volatility: 0.30, decimals: 3 }
+    - { symbol: ITX.MC, name: Inditex, initial-price: 52.14, drift: 0.07, volatility: 0.24 }
+    - { symbol: BTC-USD, name: Bitcoin, initial-price: 67250.00, drift: 0.30, volatility: 0.65 }
